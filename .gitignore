@@ -1,0 +1,33 @@
+e1/database
+e1/plots
+.DS_Store
+raw_messages.json
+farewell_analysis_results.csv
+*.pdf
+*.png
+*.jpg
+*.jpeg
+e2/voice_longitudinal
+e2/voice_recordings
+CLAUDE.md
+*.docx
+*.bak
+*.env
+.env
+
+# Intermediate/output data with participant identifiers + transcripts (kept local only)
+e1/data_with_transcripts.csv
+e1/data_llm_voice_issues.csv
+e1/data_with_llm_classifications.csv
+
+# Files containing conversation transcripts / participant free-text (kept local only)
+e1/output.csv
+e1/sampled_conversations_for_manual_coding.numbers
+e2/participant_comments/
+worker_id_crosswalk.csv
+
+.venv/
+scratch_accept.txt
+cost_estimate.py
+pilot/
+e1/openai_classification_batch.ipynb
