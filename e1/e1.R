@@ -24,6 +24,7 @@ pacman::p_load('ggplot2',
                'parallel',
                'stringr',
                'irr',
+               'car',
                'BayesFactor')
 
 # Guarded so the script also runs headlessly (Rscript), where rstudioapi is unavailable;
@@ -861,6 +862,81 @@ grid::pushViewport(grid::viewport(layout = grid::grid.layout(2, 1)))
 print(p3_messages, vp = grid::viewport(layout.pos.row = 1, layout.pos.col = 1))
 print(p3_words, vp = grid::viewport(layout.pos.row = 2, layout.pos.col = 1))
 grDevices::dev.off()
+
+# --- Participant input by condition (Stage 2 revision; requested by Reviewer 2; NOT pre-registered) ---
+# Did participants who spoke produce more input in the 15-minute session than those who typed,
+# and does the absence of a voice advantage survive adjusting for input volume?
+# Reported in SI Section A ("Participant input by condition", Table A1) and in the Study 1 Results.
+# Input metrics are built from participant-sent messages only (chatbot turns have no user_id and
+# drop out of the merge above). Note that in the user-voice conditions a "message" is one
+# transcribed speech turn, which the app segments more finely than a typed message, so total
+# words is the more comparable measure of input volume.
+cat("\n========== Participant input by condition (Study 1; SI Section A, Table A1) ==========\n")
+total_words_by_worker <- merged_data %>%
+  dplyr::group_by(worker_id) %>%
+  dplyr::summarise(total_words = sum(word_count, na.rm = TRUE), .groups = "drop")
+d_eng_chatbot <- merge(d_eng_chatbot, total_words_by_worker, by = "worker_id", all.x = TRUE)
+d_eng_chatbot$total_words[is.na(d_eng_chatbot$total_words)] <- 0
+d_eng_chatbot$total_words_c <- d_eng_chatbot$total_words - mean(d_eng_chatbot$total_words)
+d_eng_chatbot$user_voice <- d_eng_chatbot$condition %in% c("both_voice", "ai_text_human_voice")
+d_eng_chatbot$ai_voice   <- d_eng_chatbot$condition %in% c("both_voice", "ai_voice_human_text")
+
+cat("\n--- Table A1: input metrics by condition (participant-sent messages) ---\n")
+input_by_condition <- d_eng_chatbot %>%
+  dplyr::group_by(condition_f) %>%
+  dplyr::summarise(n = dplyr::n(),
+                   messages_M = mean(num_messages), messages_SD = sd(num_messages),
+                   words_per_message_M = mean(avg_words_per_message), words_per_message_SD = sd(avg_words_per_message),
+                   total_words_M = mean(total_words), total_words_SD = sd(total_words), .groups = "drop")
+print(as.data.frame(input_by_condition), digits = 4)
+
+cat("\n--- Omnibus tests across the five chatbot conditions (one-way ANOVA; Kruskal-Wallis as a robustness check) ---\n")
+for (v in c("num_messages", "avg_words_per_message", "total_words")) {
+  a <- summary(aov(as.formula(paste(v, "~ condition_f")), data = d_eng_chatbot))[[1]]
+  k <- kruskal.test(as.formula(paste(v, "~ condition_f")), data = d_eng_chatbot)
+  cat(sprintf("%s: F(%d, %d) = %.2f, p = %.3g, eta2 = %.3f | Kruskal-Wallis chi2(%d) = %.2f, p = %.3g\n",
+              v, a$Df[1], a$Df[2], a$`F value`[1], a$`Pr(>F)`[1], a$`Sum Sq`[1] / sum(a$`Sum Sq`),
+              k$parameter, k$statistic, k$p.value))
+}
+
+cat("\n--- Pairwise input comparisons (Welch two-sided t-tests, Cohen's d) ---\n")
+input_pairwise <- function(x, y, label, v) {
+  tt <- t.test(x, y); cd <- effsize::cohen.d(x, y)
+  cat(sprintf("%s [%s]: M = %.2f vs %.2f, t(%.1f) = %.2f, p = %.3g, d = %.2f [%.2f, %.2f]\n",
+              label, v, mean(x), mean(y), tt$parameter, tt$statistic, tt$p.value,
+              cd$estimate, cd$conf.int[1], cd$conf.int[2]))
+}
+fixed4 <- d_eng_chatbot[d_eng_chatbot$condition != "choose_your_own", ]
+for (v in c("num_messages", "avg_words_per_message", "total_words")) {
+  input_pairwise(d_eng_chatbot[[v]][d_eng_chatbot$condition == "both_voice"],
+                 d_eng_chatbot[[v]][d_eng_chatbot$condition == "both_text"], "voice-voice vs text-text", v)
+  input_pairwise(fixed4[[v]][fixed4$user_voice], fixed4[[v]][!fixed4$user_voice], "user-voice vs user-text (pooled)", v)
+  input_pairwise(fixed4[[v]][fixed4$ai_voice],   fixed4[[v]][!fixed4$ai_voice],   "AI-voice vs AI-text (pooled)", v)
+}
+
+cat("\n--- Does input volume predict loneliness reduction, and does the modality null survive adjustment? ---\n")
+lm_condition_only  <- lm(loneliness_reduction ~ condition_f, data = d_eng_chatbot)
+lm_adj_total_words <- lm(loneliness_reduction ~ condition_f + total_words_c, data = d_eng_chatbot)
+cat("Unadjusted condition omnibus:\n"); print(anova(lm_condition_only))
+cat("Adjusted for total words:\n"); print(round(cbind(summary(lm_adj_total_words)$coefficients, confint(lm_adj_total_words)), 4))
+# Type II (partial) tests: the condition row is adjusted for total words. Sequential
+# anova() would enter condition before total words and so would NOT adjust for it.
+adj_total_words_aov <- car::Anova(lm_adj_total_words, type = 2)
+print(adj_total_words_aov)
+ss_total_adj <- sum((d_eng_chatbot$loneliness_reduction - mean(d_eng_chatbot$loneliness_reduction))^2)
+cat(sprintf("Condition adjusted for total words: F(%d, %d) = %.2f, p = %.3f, eta2 = %.4f, partial eta2 = %.4f\n",
+            adj_total_words_aov["condition_f", "Df"], adj_total_words_aov["Residuals", "Df"],
+            adj_total_words_aov["condition_f", "F value"], adj_total_words_aov["condition_f", "Pr(>F)"],
+            adj_total_words_aov["condition_f", "Sum Sq"] / ss_total_adj,
+            adj_total_words_aov["condition_f", "Sum Sq"] /
+              (adj_total_words_aov["condition_f", "Sum Sq"] + adj_total_words_aov["Residuals", "Sum Sq"])))
+cat("Adjusted for number of messages + words per message (lm_engagement_main above):\n"); print(anova(lm_engagement_main))
+cat("Pooled modality contrasts (four fixed conditions), unadjusted and adjusted for total words:\n")
+lm_pooled_unadj <- lm(loneliness_reduction ~ user_voice + ai_voice, data = fixed4)
+lm_pooled_adj   <- lm(loneliness_reduction ~ user_voice + ai_voice + total_words_c, data = fixed4)
+print(round(cbind(summary(lm_pooled_unadj)$coefficients, confint(lm_pooled_unadj)), 4))
+print(round(cbind(summary(lm_pooled_adj)$coefficients,   confint(lm_pooled_adj)),   4))
+cat("Condition x input interactions (from lm_engagement_interaction above):\n"); print(anova(lm_engagement_interaction))
 
 } else {
   message("[reproducibility] Skipping engagement analysis: database/ message exports not present (excluded from the public repo).")

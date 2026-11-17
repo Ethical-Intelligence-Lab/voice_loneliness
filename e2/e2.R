@@ -106,6 +106,11 @@ print(sample_before)
 ############################ AGGREGATE RATINGS FROM ALL DAYS ############################
 GET_ONLY_FINISHED <- TRUE  # If TRUE, only include participants who finished the study (all 10 days)
 
+# Participants eligible after the Day-1 screening and exclusions. A few people who were
+# screened out or excluded on Day 1 still completed later-day surveys; their later-day
+# records are dropped below so that every analysed participant belongs to this sample.
+day1_ids <- unique(d$worker_id)
+
 for (DAY in DAYS) {
     if (DAY == 1) { next }  # We already read day 1
 
@@ -135,6 +140,9 @@ for (DAY in DAYS) {
     # Drop any remaining blank "shell" rows (no condition assigned): these are
     # not genuine completions of the day's content.
     d_day <- d_day[!(is.na(d_day$condition) | d_day$condition == ""), ]
+
+    # Keep only participants enrolled on Day 1 (see day1_ids above).
+    d_day <- d_day[d_day$worker_id %in% day1_ids, ]
 
     print(paste0("Number of participants on Day ", DAY, ": ", dim(d_day)[1]))
 
@@ -868,6 +876,60 @@ words_msg <- msg_m %>%
 
 msg_metrics <- merge(per_ppt_msg, words_msg, by = c("condition", "sender_type"))
 print(as.data.frame(msg_metrics))
+
+# --- Participant input by condition (Stage 2 revision; requested by Reviewer 2; NOT pre-registered) ---
+# Per-participant input over the ten days (participant-sent messages only), text vs voice, and
+# whether the voice-vs-text null survives adjusting for input volume. Reported in SI Section B
+# ("Participant input by condition in Study 2", Table B10) and in the Study 2 Results.
+# As in Study 1, a voice "message" is one transcribed speech turn, so words per day is the more
+# comparable measure of input volume than message count.
+cat("\n========== Participant input by condition (Study 2; SI Section B, Table B10) ==========\n")
+input_ppt <- msg_m %>%
+    filter(sender_type == "human") %>%
+    group_by(worker_id, condition) %>%
+    summarise(num_messages = n(), total_words = sum(n_words), words_per_message = mean(n_words), .groups = "drop")
+# text and voice completers only (control never interacted and has no messages)
+input_ppt <- merge(cond_lookup[cond_lookup$condition != "control", ], input_ppt,
+                   by = c("worker_id", "condition"), all.x = TRUE)
+for (v in c("num_messages", "total_words", "words_per_message")) input_ppt[[v]][is.na(input_ppt[[v]])] <- 0
+input_ppt$messages_per_day <- input_ppt$num_messages / length(DAYS)
+input_ppt$words_per_day    <- input_ppt$total_words  / length(DAYS)
+input_ppt$voice <- input_ppt$condition == "both_voice"
+
+cat("\n--- Table B10: input metrics by condition (per participant, averaged over the ten days) ---\n")
+print(as.data.frame(input_ppt %>% group_by(condition) %>%
+    summarise(n = n(),
+              messages_per_day_M = mean(messages_per_day), messages_per_day_SD = sd(messages_per_day),
+              words_per_message_M = mean(words_per_message), words_per_message_SD = sd(words_per_message),
+              words_per_day_M = mean(words_per_day), words_per_day_SD = sd(words_per_day), .groups = "drop")), digits = 4)
+cat("\n--- Voice vs text (Welch two-sided t-tests, Cohen's d) ---\n")
+for (v in c("messages_per_day", "words_per_message", "words_per_day")) {
+    x <- input_ppt[[v]][input_ppt$voice]; y <- input_ppt[[v]][!input_ppt$voice]
+    tt <- t.test(x, y); cd <- cohen.d(x, y)
+    cat(sprintf("%s: M = %.2f vs %.2f, t(%.1f) = %.2f, p = %.3g, d = %.2f [%.2f, %.2f]\n",
+                v, mean(x), mean(y), tt$parameter, tt$statistic, tt$p.value, cd$estimate, cd$conf.int[1], cd$conf.int[2]))
+}
+
+cat("\n--- Voice vs text loneliness outcomes, unadjusted and adjusted for words per day ---\n")
+# (i) within-session reduction averaged over the ten days per participant (the Table 3f comparison)
+ppt_red <- d %>% filter(condition %in% c("both_text", "both_voice")) %>%
+    group_by(worker_id, condition) %>%
+    summarise(reduction = mean(lonely_before - lonely_after, na.rm = TRUE), .groups = "drop") %>%
+    merge(input_ppt[, c("worker_id", "words_per_day", "messages_per_day", "words_per_message")], by = "worker_id")
+ppt_red$voice <- ppt_red$condition == "both_voice"
+for (f in c("reduction ~ voice", "reduction ~ voice + words_per_day", "reduction ~ voice + messages_per_day + words_per_message")) {
+    m <- lm(as.formula(f), data = ppt_red); cat("--", f, "--\n"); print(round(cbind(summary(m)$coefficients, confint(m)), 4))
+}
+# (ii) post-interaction loneliness mixed model (the Table 3c/3d modality comparison), with input covariate
+d_input_long <- d %>% filter(condition %in% c("both_text", "both_voice")) %>%
+    merge(input_ppt[, c("worker_id", "words_per_day")], by = "worker_id")
+d_input_long$day_n <- as.numeric(d_input_long$day) - 1
+d_input_long$voice <- d_input_long$condition == "both_voice"
+m_post_unadj <- lmer(lonely_after ~ voice * day_n + (1 | worker_id), data = d_input_long)
+m_post_adj   <- lmer(lonely_after ~ voice * day_n + scale(words_per_day) + (1 | worker_id), data = d_input_long)
+cat("-- post-interaction loneliness ~ voice * day, unadjusted --\n"); print(round(summary(m_post_unadj)$coefficients, 4))
+cat("-- post-interaction loneliness ~ voice * day + words per day (standardised) --\n"); print(round(summary(m_post_adj)$coefficients, 4))
+print(round(confint(m_post_adj, method = "Wald"), 3))
 
 } else {
   message("[reproducibility] Skipping chatbot message metrics: voice_longitudinal/ exports not present (excluded from the public repo).")

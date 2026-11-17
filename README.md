@@ -73,7 +73,8 @@ cd e2 && Rscript e2.R
 Each script prints its full results to standard output and writes figures to a `plots/`
 subdirectory that it creates. Redirect the output to a file to browse it, for example
 `Rscript e1.R > e1_output.txt`. Both scripts run start to finish from the data in this
-repository and reproduce the sample sizes and test statistics reported in the manuscript.
+repository and reproduce the sample sizes and test statistics reported in the manuscript,
+except the conversation-based analyses listed under "Data not included" below.
 
 Two switches control the Study 2 robustness analyses. `GET_ONLY_FINISHED` (near the top of
 `e2.R`) defaults to `TRUE`, restricting the sample to the 461 participants who completed all
@@ -97,7 +98,10 @@ analyses **cannot** be reproduced from this repository:
 
 - Latent Dirichlet Allocation topic modelling of participants' messages (Study 1).
 - Engagement metrics derived from the message logs — number of messages sent and average
-  words per message — and the regression predicting loneliness reduction from them.
+  words per message — and the regression predicting loneliness reduction from them (Study 1).
+- The participant word-count analyses added at a reviewer's request (not pre-registered):
+  messages, words per message and total words sent by condition, and the models adjusting
+  the modality comparisons for words sent (Study 1, SI Table A1; Study 2, SI Table B10).
 - The modality-switching analyses for the participant-choice condition (Study 1).
 
 Everything else reproduces, including all hypothesis tests in both studies, the mixed-effects
